@@ -17,12 +17,12 @@ builder.Services.AddControllers();
 // Configure Serilog
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
-    .WriteTo.MongoDB("mongodb+srv://user1:T3o6rLxvv7GHvPpJ@cv.y6ncygj.mongodb.net/JobTracker?authSource=admin", collectionName: "Logs")
+    .WriteTo.MongoDB("mongo_db_connection_string", collectionName: "Logs")
     .CreateLogger();
 
 builder.Host.UseSerilog();
 
-var mongoClient = new MongoClient("mongodb+srv://user1:T3o6rLxvv7GHvPpJ@cv.y6ncygj.mongodb.net/?authSource=admin");
+var mongoClient = new MongoClient("mongo_db_connection_string");
 var database = mongoClient.GetDatabase("JobTracker");
 var jobApplicationCollection = database.GetCollection<JobApplication>("JobApplications");
 var userCollection = database.GetCollection<User>("User");
