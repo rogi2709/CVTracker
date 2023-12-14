@@ -8,5 +8,6 @@ public interface IUserService
     Task<List<JobApplication>> GetJobApplicationsForUserAsync(string userId);
     Task<User> GetUserByIdAsync(string id);
     Task<UserOutputModel> CreateUserAsync(UserInputModel userInputModel);
-    Task<string> LoginAsync(UserLoginModel userLoginModel);
+    Task<(string AccessToken, string RefreshToken)> LoginAsync(UserLoginModel userLoginModel);
+    Task<(string AccessToken, string RefreshToken)> RefreshAccessTokenAsync(string refreshToken);
 }

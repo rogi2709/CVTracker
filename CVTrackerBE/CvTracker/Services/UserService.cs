@@ -7,6 +7,7 @@ using CvTracker.Models;
 using Microsoft.IdentityModel.Tokens;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using Serilog;
 
 namespace CvTracker.Services;
 
@@ -25,26 +26,52 @@ public class UserService:IUserService
     
     public async Task<List<JobApplication>> GetJobApplicationsForUserAsync(string userId)
     {
-        var filter = Builders<JobApplication>.Filter.Eq("UserId", userId);
-        return await _jobApplicationCollection.Find(filter).ToListAsync();
+        try
+        {
+            Log.Information("Getting job applications for user with ID {UserId}", userId);
+
+            var filter = Builders<JobApplication>.Filter.Eq("UserId", userId);
+            var jobApplications = await _jobApplicationCollection.Find(filter).ToListAsync();
+
+            Log.Information("Returning {Count} job applications for user with ID {UserId}", jobApplications.Count, userId);
+
+            return jobApplications;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Error occurred while getting job applications for user with ID {UserId}", userId);
+            throw;
+        }
     }
     public async Task<User> GetUserByIdAsync(string userId)
     {
-        if (_mongoCollection == null)
+        try
         {
-            throw new InvalidOperationException("MongoDB collection not initialized");
+            Log.Information("Getting user by ID {UserId}", userId);
+
+            if (_mongoCollection == null)
+            {
+                throw new InvalidOperationException("MongoDB collection not initialized");
+            }
+
+            var objectId = new ObjectId(userId);
+            var user = await _mongoCollection.Find(u => u.Id == objectId).FirstOrDefaultAsync();
+
+            if (user == null)
+            {
+                Log.Warning("User with ID {UserId} not found", userId);
+                throw new ArgumentNullException(nameof(user), $"User with ID {userId} not found");
+            }
+
+            Log.Information("Returning user with ID {UserId}", userId);
+
+            return user;
         }
-
-        var objectId = new ObjectId(userId);
-
-        var user = await _mongoCollection.Find(u => u.Id == objectId).FirstOrDefaultAsync();
-
-        if (user == null)
+        catch (Exception ex)
         {
-            throw new ArgumentNullException(nameof(user), $"User with ID {userId} not found");
+            Log.Error(ex, "Error occurred while getting user with ID {UserId}", userId);
+            throw;
         }
-
-        return user;
     }
     public async Task<UserOutputModel> CreateUserAsync(UserInputModel userInput)
     {
@@ -97,7 +124,7 @@ public class UserService:IUserService
        return response;
     }
 
-    public async Task<string> LoginAsync(UserLoginModel userLoginModel)
+    public async Task<(string AccessToken, string RefreshToken)> LoginAsync(UserLoginModel userLoginModel)
     {
         if (_mongoCollection == null)
         {
@@ -115,11 +142,17 @@ public class UserService:IUserService
         {
             throw new InvalidOperationException("Password is wrong");
         }
+        
+        var refreshToken = RefreshTokenHelper.GenerateRefreshToken();
+        
+        user.RefreshToken = refreshToken;
+        
+        await _mongoCollection.ReplaceOneAsync(u => u.Id == user.Id, user);
 
         var tokenHandler = new JwtSecurityTokenHandler();
         var jwtSettings = _configuration.GetSection("Jwt");
         var key = Encoding.ASCII.GetBytes(jwtSettings["Key"]);
-        
+
         var claims = new List<Claim>
         {
             new Claim(ClaimTypes.Name, user.Id.ToString()),
@@ -135,6 +168,47 @@ public class UserService:IUserService
         var accessToken = tokenHandler.CreateToken(tokenDescriptor);
         var accessTokenString = tokenHandler.WriteToken(accessToken);
 
-        return accessTokenString;
+        return (accessTokenString, refreshToken);
     }
+    
+    public async Task<(string AccessToken, string RefreshToken)> RefreshAccessTokenAsync(string refreshToken)
+    {
+        var user = await _mongoCollection.Find(u => u.RefreshToken == refreshToken).FirstOrDefaultAsync();
+
+        if (user == null)
+        {
+            throw new ArgumentNullException(nameof(user), "User not found or refresh token invalid");
+        }
+        
+        var newRefreshToken = RefreshTokenHelper.GenerateRefreshToken();
+        
+        user.RefreshToken = newRefreshToken;
+
+        await _mongoCollection.ReplaceOneAsync(u => u.Id == user.Id, user);
+        var tokenHandler = new JwtSecurityTokenHandler();
+        var jwtSettings = _configuration.GetSection("Jwt");
+        var key = Encoding.ASCII.GetBytes(jwtSettings["Key"]);
+
+        var claims = new List<Claim>
+        {
+            new Claim(ClaimTypes.Name, user.Id.ToString()),
+        };
+
+        var tokenDescriptor = new SecurityTokenDescriptor
+        {
+            Subject = new ClaimsIdentity(claims),
+            Expires = DateTime.UtcNow.AddMinutes(120), 
+            SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)
+        };
+
+        var accessToken = tokenHandler.CreateToken(tokenDescriptor);
+        var accessTokenString = tokenHandler.WriteToken(accessToken);
+
+        return (accessTokenString, newRefreshToken);
+    }
+
+
+    
+    
+
 }
